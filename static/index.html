@@ -210,7 +210,9 @@
         const { useState, useEffect, useRef } = React;
 
         function Dashboard() {
-            const [data, setData] = useState({ summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0 }, results: [] });
+            const [summaryData, setSummaryData] = useState({ total: 0, critical: 0, high: 0, medium: 0, low: 0 });
+            const [liveResults, setLiveResults] = useState([]);
+            const [activeTab, setActiveTab] = useState('live'); // 'live' or 'flagged'
             const [statsData, setStatsData] = useState([]);
             const [blocklist, setBlocklist] = useState([]);
             const [allowlist, setAllowlist] = useState({ hardcoded: [], overrides: [], combined: [] });
@@ -220,8 +222,19 @@
             const chartInstance = useRef(null);
             const lineChartRef = useRef(null);
             const lineChartInstance = useRef(null);
+            const [lastUpdated, setLastUpdated] = useState(0);
 
-            const fetchData = async () => {
+            const fetchSummary = async () => {
+                try {
+                    const res = await fetch('/api/summary');
+                    const result = await res.json();
+                    setSummaryData(result);
+                } catch (e) {
+                    console.error("Error fetching summary:", e);
+                }
+            };
+
+            const fetchLiveQueries = async () => {
                 let url = '/api/queries';
                 if (filter !== 'All') {
                     url += `?risk=${filter.toLowerCase()}`;
@@ -229,9 +242,11 @@
                 try {
                     const res = await fetch(url);
                     const result = await res.json();
-                    setData(result);
+                    if (result.results) {
+                        setLiveResults(result.results);
+                    }
                 } catch (e) {
-                    console.error("Error fetching data:", e);
+                    console.error("Error fetching live queries:", e);
                 }
             };
             
@@ -261,6 +276,7 @@
                 try {
                     const res = await fetch('/api/stats');
                     const result = await res.json();
+                    console.log("Stats API Response:", result);
                     setStatsData(result);
                 } catch (e) {
                     console.error("Error fetching stats:", e);
@@ -275,32 +291,37 @@
                         body: JSON.stringify({ domain })
                     });
                     // Refresh data after override
-                    fetchData();
+                    fetchLiveQueries();
                     fetchBlocklist();
                     fetchAllowlist();
+                    fetchSummary();
                 } catch (e) {
                     console.error("Error overriding domain:", e);
                 }
             };
 
-            // Fetch on mount, filter change, and every 30 seconds
+            // Fetch on mount, filter change, and every 20 seconds
             useEffect(() => {
-                fetchData();
-                const interval = setInterval(fetchData, 30000);
-                return () => clearInterval(interval);
-            }, [filter]);
-            
-            // Polling interval
-            useEffect(() => {
-                fetchBlocklist();
-                fetchAllowlist();
-                fetchStats();
-                const interval = setInterval(() => {
+                const fetchAll = () => {
+                    fetchSummary();
+                    fetchLiveQueries();
                     fetchBlocklist();
                     fetchAllowlist();
                     fetchStats();
-                }, 30000);
+                    setLastUpdated(0);
+                };
+                
+                fetchAll();
+                const interval = setInterval(fetchAll, 20000);
                 return () => clearInterval(interval);
+            }, [filter]);
+            
+            // Timer for last updated indicator
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    setLastUpdated(prev => prev + 1);
+                }, 1000);
+                return () => clearInterval(timer);
             }, []);
 
             // Chart initialization & update
@@ -322,10 +343,10 @@
                             labels: ['Critical', 'High', 'Medium', 'Low'],
                             datasets: [{
                                 data: [
-                                    data.summary.critical,
-                                    data.summary.high,
-                                    data.summary.medium,
-                                    data.summary.low
+                                    summaryData.live_critical || 0,
+                                    summaryData.live_high || 0,
+                                    summaryData.live_medium || 0,
+                                    summaryData.live_low || 0
                                 ],
                                 backgroundColor: [
                                     '#ff4d4d', 
@@ -360,7 +381,7 @@
                         chartInstance.current.destroy();
                     }
                 };
-            }, [data.summary]); // Re-render chart only when summary statistics change
+            }, [summaryData]); // Re-render chart only when summary statistics change
 
             // Line Chart initialization & update
             useEffect(() => {
@@ -412,15 +433,6 @@
                 };
             }, [statsData]);
 
-            const loadSample = async () => {
-                try {
-                    await fetch('/api/load-sample', { method: 'POST' });
-                    await fetchData();
-                } catch (e) {
-                    console.error("Error loading sample:", e);
-                }
-            };
-
             const analyzeDomain = async () => {
                 if (!domainInput.trim()) return;
                 try {
@@ -430,7 +442,8 @@
                         body: JSON.stringify({ domain: domainInput.trim() })
                     });
                     setDomainInput('');
-                    await fetchData();
+                    await fetchLiveQueries();
+                    await fetchSummary();
                 } catch (e) {
                     console.error("Error analyzing domain:", e);
                 }
@@ -455,19 +468,19 @@
                     <div className="stats-grid">
                         <div className="stat-card">
                             <h3>Total Queries</h3>
-                            <div className="value">{data.summary.total}</div>
+                            <div className="value">{summaryData.total}</div>
                         </div>
                         <div className="stat-card">
                             <h3 style={{color: 'var(--red-color)'}}>Critical</h3>
-                            <div className="value">{data.summary.critical}</div>
+                            <div className="value">{summaryData.critical}</div>
                         </div>
                         <div className="stat-card">
                             <h3 style={{color: 'var(--orange-color)'}}>High</h3>
-                            <div className="value">{data.summary.high}</div>
+                            <div className="value">{summaryData.high}</div>
                         </div>
                         <div className="stat-card">
                             <h3 style={{color: 'var(--yellow-color)'}}>Medium</h3>
-                            <div className="value">{data.summary.medium}</div>
+                            <div className="value">{summaryData.medium}</div>
                         </div>
                     </div>
 
@@ -475,7 +488,7 @@
                         <div className="panel" style={{gridColumn: '1'}}>
                             <div className="action-bar">
                                 <div className="row">
-                                    <button onClick={loadSample}>Load Sample Log</button>
+                                    <span style={{fontSize: '0.85em', color: '#888'}}>Last updated: {lastUpdated} seconds ago (Auto-refreshs every 20s)</span>
                                 </div>
                                 <div className="row">
                                     <input 
@@ -493,68 +506,136 @@
                             <hr style={{borderColor: 'var(--border-color)', margin: '20px 0'}} />
 
                             <div className="action-bar">
-                                <h3 style={{margin: 0}}>Analysis Results</h3>
-                                <div>
-                                    <label style={{marginRight: '8px', color: '#aaa'}}>Filter by Risk:</label>
-                                    <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-                                        <option value="All">All Levels</option>
-                                        <option value="critical">Critical</option>
-                                        <option value="high">High</option>
-                                        <option value="medium">Medium</option>
-                                        <option value="low">Low</option>
-                                    </select>
+                                <div style={{display: 'flex', gap: '10px'}}>
+                                    <button 
+                                        style={{backgroundColor: activeTab === 'live' ? '#3b82f6' : '#333', borderColor: activeTab === 'live' ? '#3b82f6' : '#555'}}
+                                        onClick={() => setActiveTab('live')}
+                                    >Live Feed</button>
+                                    <button 
+                                        style={{backgroundColor: activeTab === 'flagged' ? '#dc2626' : '#333', borderColor: activeTab === 'flagged' ? '#dc2626' : '#555'}}
+                                        onClick={() => setActiveTab('flagged')}
+                                    >Flagged</button>
                                 </div>
+                                {activeTab === 'live' && (
+                                    <div>
+                                        <label style={{marginRight: '8px', color: '#aaa'}}>Filter by Risk:</label>
+                                        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+                                            <option value="All">All Levels</option>
+                                            <option value="critical">Critical</option>
+                                            <option value="high">High</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="low">Low</option>
+                                        </select>
+                                    </div>
+                                )}
                             </div>
 
                             <div style={{overflowX: 'auto'}}>
                                 <table>
                                     <thead>
-                                        <tr>
-                                            <th>Domain</th>
-                                            <th>Risk</th>
-                                            <th style={{minWidth: '100px'}}>Score</th>
-                                            <th>Entropy</th>
-                                            <th>Client IP</th>
-                                            <th>Flags</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {data.results.length === 0 ? (
+                                        {activeTab === 'live' ? (
                                             <tr>
-                                                <td colSpan="6" style={{textAlign: 'center', padding: '30px', color: '#888'}}>
-                                                    No results to display. Try changing the filter, loading a sample, or analyzing a domain.
-                                                </td>
+                                                <th>Domain</th>
+                                                <th>Risk</th>
+                                                <th style={{minWidth: '100px'}}>Score</th>
+                                                <th>Entropy</th>
+                                                <th>Client IP</th>
+                                                <th>Flags</th>
                                             </tr>
                                         ) : (
-                                            data.results.map((item, i) => (
-                                                <tr key={i}>
-                                                    <td style={{fontFamily: 'monospace', fontSize: '1.05em'}}>{item.domain}</td>
-                                                    <td>
-                                                        <span className={`badge ${item.risk.toLowerCase()}`}>
-                                                            {item.risk}
-                                                        </span>
-                                                    </td>
-                                                    <td>
-                                                        {item.score}
-                                                        <div className="score-bar-bg">
-                                                            <div 
-                                                                className="score-bar-fill" 
-                                                                style={{
-                                                                    width: `${item.score}%`,
-                                                                    backgroundColor: getColorForRisk(item.risk)
-                                                                }}
-                                                            ></div>
-                                                        </div>
-                                                    </td>
-                                                    <td>{item.entropy}</td>
-                                                    <td>{item.client_ip}</td>
-                                                    <td>
-                                                        <span style={{color: '#bbb', fontSize: '0.9em'}}>
-                                                            {item.flags && item.flags.length > 0 ? item.flags.join(', ') : 'None'}
-                                                        </span>
+                                            <tr>
+                                                <th>Domain</th>
+                                                <th>Risk</th>
+                                                <th style={{minWidth: '100px'}}>Score</th>
+                                                <th>Timestamp</th>
+                                                <th>Flags</th>
+                                                <th>Action</th>
+                                            </tr>
+                                        )}
+                                    </thead>
+                                    <tbody>
+                                        {activeTab === 'live' && (
+                                            liveResults.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan="6" style={{textAlign: 'center', padding: '30px', color: '#888'}}>
+                                                        No results to display in Live Feed.
                                                     </td>
                                                 </tr>
-                                            ))
+                                            ) : (
+                                                liveResults.map((item, i) => (
+                                                    <tr key={`live-${i}`}>
+                                                        <td style={{fontFamily: 'monospace', fontSize: '1.05em'}}>{item.domain}</td>
+                                                        <td>
+                                                            <span className={`badge ${item.risk.toLowerCase()}`}>
+                                                                {item.risk}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            {item.score}
+                                                            <div className="score-bar-bg">
+                                                                <div 
+                                                                    className="score-bar-fill" 
+                                                                    style={{
+                                                                        width: `${item.score}%`,
+                                                                        backgroundColor: getColorForRisk(item.risk)
+                                                                    }}
+                                                                ></div>
+                                                            </div>
+                                                        </td>
+                                                        <td>{typeof item.entropy === 'number' ? item.entropy.toFixed(2) : 'N/A'}</td>
+                                                        <td>{item.client_ip}</td>
+                                                        <td>
+                                                            <span style={{color: '#bbb', fontSize: '0.9em'}}>
+                                                                {item.flags && item.flags.length > 0 ? item.flags.join(', ') : 'None'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )
+                                        )}
+                                        {activeTab === 'flagged' && (
+                                            blocklist.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan="6" style={{textAlign: 'center', padding: '30px', color: '#888'}}>
+                                                        No flagged threats yet.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                blocklist.map((item, i) => (
+                                                    <tr key={`flag-${i}`}>
+                                                        <td style={{fontFamily: 'monospace', fontSize: '1.05em', color: '#fff'}}>{item.domain}</td>
+                                                        <td>
+                                                            <span className={`badge ${item.risk.toLowerCase()}`}>
+                                                                {item.risk}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            {item.score}
+                                                            <div className="score-bar-bg">
+                                                                <div 
+                                                                    className="score-bar-fill" 
+                                                                    style={{
+                                                                        width: `${item.score}%`,
+                                                                        backgroundColor: getColorForRisk(item.risk)
+                                                                    }}
+                                                                ></div>
+                                                            </div>
+                                                        </td>
+                                                        <td>{new Date(item.timestamp).toLocaleString()}</td>
+                                                        <td>
+                                                            <span style={{color: '#eab308', fontSize: '0.9em'}}>
+                                                                {item.flags && item.flags.length > 0 ? item.flags.join(', ') : 'None'}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <button 
+                                                                onClick={() => handleOverride(item.domain)}
+                                                                style={{padding: '6px 12px', fontSize: '0.8em', backgroundColor: '#333', border: '1px solid #555', borderRadius: '4px'}}
+                                                            >Override to Allowlist</button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )
                                         )}
                                     </tbody>
                                 </table>
@@ -577,7 +658,7 @@
 
                             <h3 className="panel-header">Risk Distribution</h3>
                             <div className="chart-container">
-                                {data.summary.total === 0 ? (
+                                {(summaryData.live_critical || 0) + (summaryData.live_high || 0) + (summaryData.live_medium || 0) + (summaryData.live_low || 0) === 0 ? (
                                     <div style={{color: '#666', fontStyle: 'italic'}}>
                                         No data available
                                     </div>
@@ -589,9 +670,9 @@
                             <hr style={{borderColor: 'var(--border-color)', margin: '24px 0'}} />
                             
                             <h3 className="panel-header" style={{color: 'var(--red-color)'}}>
-                                Agentic Blocklist
+                                Threat History
                                 <span style={{fontSize: '0.6em', color: '#aaaaaa', marginLeft: '10px', verticalAlign: 'middle', fontWeight: 'normal'}}>
-                                    (Auto-updated)
+                                    (Persistent Detections)
                                 </span>
                             </h3>
                             <div style={{
@@ -604,20 +685,35 @@
                             }}>
                                 {blocklist.length === 0 ? (
                                     <div style={{color: '#888', fontStyle: 'italic', textAlign: 'center'}}>
-                                        No domains have been auto-blocked by the agent yet.
+                                        No threats detected yet.
                                     </div>
                                 ) : (
-                                    <ul style={{margin: 0, paddingLeft: '20px', color: '#ffcccc'}}>
+                                    <ul style={{margin: 0, paddingLeft: '0', listStyleType: 'none'}}>
                                         {blocklist.map((item, i) => (
-                                            <li key={i} style={{marginBottom: '8px'}}>
+                                            <li key={i} style={{marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid rgba(255,255,255,0.1)'}}>
                                                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
-                                                    <div>
-                                                        <span style={{fontFamily: 'monospace', fontWeight: 'bold'}}>{item.domain}</span>
-                                                        <div style={{fontSize: '0.8em', color: '#aaaaaa'}}>{new Date(item.timestamp).toLocaleString()}</div>
+                                                    <div style={{flex: 1}}>
+                                                        <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
+                                                            <span style={{fontFamily: 'monospace', fontWeight: 'bold', fontSize: '1.1em', color: '#fff'}}>{item.domain}</span>
+                                                            <span className={`badge ${item.risk.toLowerCase()}`}>
+                                                                {item.risk}
+                                                            </span>
+                                                        </div>
+                                                        <div style={{fontSize: '0.85em', color: '#aaaaaa', marginBottom: '4px'}}>
+                                                            {new Date(item.timestamp).toLocaleString()} | IP: {item.client_ip}
+                                                        </div>
+                                                        <div style={{fontSize: '0.85em', color: '#dddddd'}}>
+                                                            <strong>Score:</strong> {item.score} | <strong>Entropy:</strong> {typeof item.entropy === 'number' ? item.entropy.toFixed(2) : 'N/A'}
+                                                        </div>
+                                                        {item.flags && item.flags.length > 0 && (
+                                                            <div style={{fontSize: '0.8em', color: '#eab308', marginTop: '4px'}}>
+                                                                ⚠️ {item.flags.join(', ')}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     <button 
                                                         onClick={() => handleOverride(item.domain)}
-                                                        style={{padding: '4px 8px', fontSize: '0.75em', backgroundColor: '#333', border: '1px solid #555'}}
+                                                        style={{padding: '6px 12px', fontSize: '0.8em', backgroundColor: '#333', border: '1px solid #555', borderRadius: '4px', cursor: 'pointer', marginLeft: '10px'}}
                                                     >Override</button>
                                                 </div>
                                             </li>
@@ -626,7 +722,7 @@
                                 )}
                             </div>
                             <div style={{marginTop: '12px', fontSize: '0.85em', color: '#888', fontStyle: 'italic', lineHeight: '1.4'}}>
-                                <strong>How it works:</strong> The agentic loop continuously monitors DNS queries, reasons about threats by scoring domains against heuristic models and known threat feeds, and autonomously acts by appending 'Critical' threats to a firewall-ready blocklist without human intervention.
+                                <strong>How it works:</strong> The capture engine continuously monitors DNS queries, immediately evaluates threats using heuristic models, and autonomously logs 'Critical' and 'High' threats to persistent storage to track suspicious activity over time.
                             </div>
                             
                             <hr style={{borderColor: 'var(--border-color)', margin: '24px 0'}} />

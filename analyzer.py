@@ -12,7 +12,7 @@ _phishing_domains = set()
 ALLOWLIST = {
     "google.com", "github.com", "microsoft.com", 
     "amazon.com", "cloudflare.com", "youtube.com", 
-    "stackoverflow.com"
+    "stackoverflow.com", "jsdelivr.net"
 }
 OVERRIDE_FILE = "override_allowlist.txt"
 
@@ -112,6 +112,7 @@ def is_known_malicious(domain):
 def is_known_phishing(domain):
     """
     Checks if a domain or any of its parent domains exist in _phishing_domains.
+    WHY: Attackers often use subdomains off a known phishing apex domain to bypass simple blocks.
     """
     domain = domain.lower()
     parts = domain.split('.')
@@ -186,7 +187,6 @@ def score_domain(domain):
     WHY: Combining multiple weak signals (like depth or entropy) or a single strong 
     signal (like a known threat match) gives a more robust indication of malicious intent
     than relying on any single metric.
-    Than relying on any single metric.
     """
     domain_lower = domain.lower()
     parts = domain_lower.split('.')
@@ -275,9 +275,13 @@ def parse_dns_log(filepath):
     WHY: We need to normalize raw log formats into structured data before analysis.
     """
     entries = []
+    from collections import deque
     try:
         with open(filepath, 'r') as f:
-            for line in f:
+            # Efficiently read only the last 50 lines
+            last_lines = deque(f, 50)
+            
+            for line in last_lines:
                 parts = line.strip().split()
                 if len(parts) >= 4:
                     entries.append({

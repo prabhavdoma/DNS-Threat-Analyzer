@@ -6,6 +6,8 @@ import analyzer
 import agent
 import capture
 import threading
+import datetime
+import db
 
 app = Flask(__name__, static_folder='static')
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
@@ -26,10 +28,11 @@ def initialize_feed():
     if not _feed_loaded:
         print("Initializing threat feed...")
         analyzer.load_threat_feed()
+        db.init_db()
         _feed_loaded = True
         print("Threat feed initialized.")
         print("Starting agent monitoring thread...")
-        agent.start_agent_thread()
+        agent.start_agent_thread(_analysis_history)
         print("Starting DNS capture thread...")
         capture.start_capture()
 
@@ -106,30 +109,10 @@ def analyze_uploaded_log():
             
         return jsonify(results)
 
-@app.route('/api/load-sample', methods=['POST'])
-def load_sample_log():
-    """
-    Analyzes the built-in sample log, clearing and replacing the history.
-    WHY: Provides a quick way to demonstrate the tool's capabilities with
-    known good and bad data without needing an external file upload.
-    """
-    global _analysis_history
-    
-    sample_path = os.path.join(os.path.dirname(__file__), 'sample_logs', 'sample.log')
-    if not os.path.exists(sample_path):
-        return jsonify({"error": "Sample log not found"}), 404
-        
-    # Clear and replace history
-    _analysis_history = analyzer.analyze_log(sample_path)
-    
-    return jsonify(_analysis_history)
-
 @app.route('/api/queries', methods=['GET'])
 def get_queries():
     """
-    Returns the stored query history with an optional risk filter and a summary.
-    WHY: Allows the frontend dashboard to retrieve historical data, filter by 
-    severity (e.g., only show Critical), and display aggregate statistics.
+    Returns the stored query history with an optional risk filter.
     """
     risk_filter = request.args.get('risk', '').lower()
     
@@ -137,19 +120,56 @@ def get_queries():
     if risk_filter:
         filtered_results = [r for r in _analysis_history if r['risk'].lower() == risk_filter]
         
-    # Generate summary stats
-    summary = {
-        "total": len(_analysis_history),
-        "critical": sum(1 for r in _analysis_history if r['risk'] == 'Critical'),
-        "high": sum(1 for r in _analysis_history if r['risk'] == 'High'),
-        "medium": sum(1 for r in _analysis_history if r['risk'] == 'Medium'),
-        "low": sum(1 for r in _analysis_history if r['risk'] == 'Low')
-    }
-    
     return jsonify({
-        "summary": summary,
         "results": filtered_results
     })
+
+@app.route('/api/summary', methods=['GET'])
+def get_summary():
+    """
+    Returns total captured queries from sample.log, persistent Critical/High
+    counts from threats.db, and live feed counts from _analysis_history.
+    WHY: Critical/High are persisted in the DB so they reflect all-time detections.
+    Medium/Low are transient (only exist in the live feed), so we count them
+    from _analysis_history. The donut chart uses the live_* fields to match
+    what the user sees in the Live Feed table.
+    """
+    total_queries = 0
+    log_path = os.path.join(os.path.dirname(__file__), 'sample_logs', 'sample.log')
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r') as f:
+                total_queries = sum(1 for _ in f)
+        except Exception as e:
+            print(f"Error reading log for summary: {e}")
+            
+    try:
+        db_stats = db.get_stats()
+    except Exception as e:
+        print(f"Error querying db for summary: {e}")
+        db_stats = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+
+    # Count risk levels from the live feed (in-memory analysis of last 50 log entries)
+    live_critical = sum(1 for r in _analysis_history if r['risk'] == 'Critical')
+    live_high = sum(1 for r in _analysis_history if r['risk'] == 'High')
+    live_medium = sum(1 for r in _analysis_history if r['risk'] == 'Medium')
+    live_low = sum(1 for r in _analysis_history if r['risk'] == 'Low')
+        
+    summary = {
+        "total": total_queries,
+        # Stat cards: Critical/High from DB (persistent), Medium/Low from live feed
+        "critical": db_stats.get("Critical", 0),
+        "high": db_stats.get("High", 0),
+        "medium": live_medium,
+        "low": live_low,
+        # Donut chart: all counts from live feed so it matches the visible table
+        "live_critical": live_critical,
+        "live_high": live_high,
+        "live_medium": live_medium,
+        "live_low": live_low
+    }
+    
+    return jsonify(summary)
 
 @app.route('/api/clear', methods=['POST'])
 def clear_history():
@@ -179,9 +199,6 @@ def add_override():
         with open(analyzer.OVERRIDE_FILE, 'a') as f:
             f.write(f"{domain}\n")
             
-        # Clean blocklist of this newly allowlisted domain
-        agent.clean_blocklist()
-        
         # Update in-memory history
         for entry in _analysis_history:
             if entry["domain"].lower() == domain or entry["domain"].lower().endswith("." + domain):
@@ -198,6 +215,8 @@ def add_override():
 def get_allowlist_endpoint():
     """
     Returns both hardcoded and override allowlists.
+    WHY: Exposing the combined allowlist allows the frontend to show which domains are trusted
+    and won't be blocked, differentiating between built-in rules and user overrides.
     """
     hardcoded = list(analyzer.ALLOWLIST)
     overrides = []
@@ -221,34 +240,23 @@ def get_allowlist_endpoint():
 @app.route('/api/blocklist', methods=['GET'])
 def get_blocklist():
     """
-    Reads the blocklist.txt file and returns its contents.
-    WHY: Exposes the agent's actions to the frontend dashboard, allowing users
-    to see the automated blocklist updates.
+    Returns all Critical and High detections ever seen from threats.db.
+    WHY: Exposes the persistent threat history to the frontend dashboard.
     """
-    blocklist = []
-    if os.path.exists(agent.BLOCKLIST_FILE):
-        try:
-            with open(agent.BLOCKLIST_FILE, 'r') as f:
-                for line in f:
-                    parts = line.strip().split(',')
-                    if len(parts) >= 2:
-                        blocklist.append({
-                            "timestamp": parts[0],
-                            "domain": parts[1]
-                        })
-        except Exception as e:
-            print(f"Error reading blocklist: {e}")
-            
-    return jsonify(blocklist)
+    try:
+        threats = db.get_threats()
+        return jsonify(threats)
+    except Exception as e:
+        print(f"Error reading from threats.db: {e}")
+        return jsonify([])
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """
     Returns query counts bucketed by minute for the last 10 minutes,
-    based on the timestamps in sample_logs/sample.log
+    based on the timestamps in sample_logs/sample.log.
+    WHY: Feeds data to the frontend line chart, enabling visual tracking of query volume over time.
     """
-    import datetime
-    
     stats = {}
     now = datetime.datetime.now()
     
@@ -269,14 +277,23 @@ def get_stats():
                     parts = line.strip().split()
                     if len(parts) >= 1:
                         try:
-                            # Timestamp is ISO format
-                            ts = datetime.datetime.fromisoformat(parts[0])
-                            # Check if it's within the last 10 minutes
-                            if now - ts <= datetime.timedelta(minutes=10):
+                            ts_str = parts[0]
+                            if ts_str.endswith('Z'):
+                                ts_str = ts_str.replace('Z', '+00:00')
+                                
+                            ts = datetime.datetime.fromisoformat(ts_str)
+                            
+                            # Normalize offset-aware datetimes to naive local to compare with naive now
+                            if ts.tzinfo is not None:
+                                ts = ts.astimezone().replace(tzinfo=None)
+                                
+                            # Check if it's within the last 10 minutes (allow slight future differences)
+                            delta = now - ts
+                            if datetime.timedelta(minutes=-1) <= delta <= datetime.timedelta(minutes=10):
                                 minute_bucket = ts.strftime('%H:%M')
                                 if minute_bucket in stats:
                                     stats[minute_bucket] += 1
-                        except ValueError:
+                        except ValueError as ve:
                             pass
         except Exception as e:
             print(f"Error reading log for stats: {e}")

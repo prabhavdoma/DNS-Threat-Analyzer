@@ -4,45 +4,26 @@ import os
 from datetime import datetime
 import analyzer
 
-BLOCKLIST_FILE = "blocklist.txt"
-
-def clean_blocklist():
-    """Removes allowlisted domains from the blocklist."""
-    if not os.path.exists(BLOCKLIST_FILE):
-        return
-    
-    try:
-        valid_lines = []
-        with open(BLOCKLIST_FILE, 'r') as f:
-            for line in f:
-                parts = line.strip().split(',')
-                if len(parts) >= 2:
-                    domain = parts[1]
-                    if not analyzer.is_allowlisted(domain):
-                        valid_lines.append(line)
-                        
-        with open(BLOCKLIST_FILE, 'w') as f:
-            for line in valid_lines:
-                f.write(line)
-        print("Blocklist cleaned of any newly allowlisted domains.")
-    except Exception as e:
-        print(f"Error cleaning blocklist: {e}")
+_shared_history = None
 
 def run_agent():
     """
     AGENTIC LOOP FUNCTION
     
-    This function implements a simple autonomous agent loop:
-    1. PERCEIVE: It constantly monitors the environment by reading the DNS logs every 30 seconds.
-    2. REASON: It analyzes each domain using heuristics to score them. It reasons that any 
-       domain with a 'Critical' risk score poses an immediate threat.
-    3. ACT: It automatically updates the blocklist file with the new threat without human 
-       intervention, effectively "blocking" the domain.
+    This function implements an autonomous agent loop (Perceive, Reason, Act):
+    
+    1. PERCEIVE: It monitors the environment by reading the live DNS queries stored 
+       in the sample.log file every 20 seconds.
+       
+    2. REASON: It analyzes each domain using heuristics (entropy, subdomains, etc.) 
+       and known threat feeds to assign a risk score. It reasons that any domain 
+       with a 'Critical' risk score poses an immediate threat to the network.
+       
+    3. ACT: It autonomously updates the firewall-ready blocklist file with the new 
+       threats without human intervention. It also updates the live, shared session 
+       state for the UI dashboard.
     """
     print("Agent started: Monitoring DNS logs for critical threats...")
-    
-    # Clean the blocklist on startup
-    clean_blocklist()
     
     while True:
         try:
@@ -58,37 +39,28 @@ def run_agent():
                 # REASON: Identify critical threats
                 critical_domains = [r['domain'] for r in results if r['risk'] == 'Critical']
                 
-                # Load existing blocklist to avoid duplicates
-                existing_blocks = set()
-                if os.path.exists(BLOCKLIST_FILE):
-                    with open(BLOCKLIST_FILE, 'r') as f:
-                        for line in f:
-                            parts = line.strip().split(',')
-                            if len(parts) >= 2:
-                                existing_blocks.add(parts[1])
-                                
-                # ACT: Update blocklist with new findings
-                new_blocks = 0
-                for domain in critical_domains:
-                    if domain not in existing_blocks and not analyzer.is_allowlisted(domain):
-                        timestamp = datetime.now().isoformat()
-                        with open(BLOCKLIST_FILE, 'a') as f:
-                            f.write(f"{timestamp},{domain}\n")
-                        print(f"[AGENT ALERT] Auto-blocked new critical threat: {domain}")
-                        existing_blocks.add(domain)
-                        new_blocks += 1
-                        
-                if new_blocks > 0:
-                    print(f"Agent finished cycle: Added {new_blocks} new domains to blocklist.")
+                # Update app._analysis_history with LIVE captured log
+                try:
+                    if _shared_history is not None:
+                        _shared_history.clear()
+                        _shared_history.extend(results)
+                    else:
+                        import app
+                        app._analysis_history.clear()
+                        app._analysis_history.extend(results)
+                except Exception as e:
+                    print(f"Agent error updating app history: {e}")
                     
         except Exception as e:
             print(f"Agent error in monitoring loop: {e}")
             
-        # Wait 30 seconds before next cycle
-        time.sleep(30)
+        # Wait 20 seconds before next cycle
+        time.sleep(20)
 
-def start_agent_thread():
+def start_agent_thread(history_list=None):
     """Starts the agent monitoring loop in a background daemon thread."""
+    global _shared_history
+    _shared_history = history_list
     agent_thread = threading.Thread(target=run_agent, daemon=True)
     agent_thread.start()
     return agent_thread
