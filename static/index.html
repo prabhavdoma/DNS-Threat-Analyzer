@@ -212,6 +212,7 @@
         function Dashboard() {
             const [data, setData] = useState({ summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0 }, results: [] });
             const [blocklist, setBlocklist] = useState([]);
+            const [allowlist, setAllowlist] = useState({ hardcoded: [], overrides: [], combined: [] });
             const [filter, setFilter] = useState('All');
             const [domainInput, setDomainInput] = useState('');
             const chartRef = useRef(null);
@@ -242,6 +243,32 @@
                     console.error("Error fetching blocklist:", e);
                 }
             };
+            
+            const fetchAllowlist = async () => {
+                try {
+                    const res = await fetch('/api/allowlist');
+                    const result = await res.json();
+                    setAllowlist(result);
+                } catch (e) {
+                    console.error("Error fetching allowlist:", e);
+                }
+            };
+
+            const handleOverride = async (domain) => {
+                try {
+                    await fetch('/api/override', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ domain })
+                    });
+                    // Refresh data after override
+                    fetchData();
+                    fetchBlocklist();
+                    fetchAllowlist();
+                } catch (e) {
+                    console.error("Error overriding domain:", e);
+                }
+            };
 
             // Fetch on mount, filter change, and every 30 seconds
             useEffect(() => {
@@ -250,10 +277,14 @@
                 return () => clearInterval(interval);
             }, [filter]);
             
-            // Blocklist polling interval
+            // Polling interval
             useEffect(() => {
                 fetchBlocklist();
-                const interval = setInterval(fetchBlocklist, 30000);
+                fetchAllowlist();
+                const interval = setInterval(() => {
+                    fetchBlocklist();
+                    fetchAllowlist();
+                }, 30000);
                 return () => clearInterval(interval);
             }, []);
 
@@ -501,8 +532,16 @@
                                     <ul style={{margin: 0, paddingLeft: '20px', color: '#ffcccc'}}>
                                         {blocklist.map((item, i) => (
                                             <li key={i} style={{marginBottom: '8px'}}>
-                                                <span style={{fontFamily: 'monospace', fontWeight: 'bold'}}>{item.domain}</span>
-                                                <div style={{fontSize: '0.8em', color: '#aaaaaa'}}>{new Date(item.timestamp).toLocaleString()}</div>
+                                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
+                                                    <div>
+                                                        <span style={{fontFamily: 'monospace', fontWeight: 'bold'}}>{item.domain}</span>
+                                                        <div style={{fontSize: '0.8em', color: '#aaaaaa'}}>{new Date(item.timestamp).toLocaleString()}</div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => handleOverride(item.domain)}
+                                                        style={{padding: '4px 8px', fontSize: '0.75em', backgroundColor: '#333', border: '1px solid #555'}}
+                                                    >Override</button>
+                                                </div>
                                             </li>
                                         ))}
                                     </ul>
@@ -510,6 +549,38 @@
                             </div>
                             <div style={{marginTop: '12px', fontSize: '0.85em', color: '#888', fontStyle: 'italic', lineHeight: '1.4'}}>
                                 <strong>How it works:</strong> The agentic loop continuously monitors DNS queries, reasons about threats by scoring domains against heuristic models and known threat feeds, and autonomously acts by appending 'Critical' threats to a firewall-ready blocklist without human intervention.
+                            </div>
+                            
+                            <hr style={{borderColor: 'var(--border-color)', margin: '24px 0'}} />
+                            
+                            <h3 className="panel-header" style={{color: 'var(--green-color)'}}>
+                                Trusted Allowlist
+                            </h3>
+                            <div style={{
+                                border: '1px solid var(--green-color)', 
+                                borderRadius: '6px', 
+                                padding: '15px',
+                                backgroundColor: 'rgba(77, 255, 77, 0.05)',
+                                maxHeight: '300px',
+                                overflowY: 'auto'
+                            }}>
+                                {allowlist.combined.length === 0 ? (
+                                    <div style={{color: '#888', fontStyle: 'italic', textAlign: 'center'}}>
+                                        No domains are allowlisted.
+                                    </div>
+                                ) : (
+                                    <ul style={{margin: 0, paddingLeft: '20px', color: '#ccffcc'}}>
+                                        {allowlist.combined.map((domain, i) => (
+                                            <li key={i} style={{marginBottom: '6px'}}>
+                                                <span style={{fontFamily: 'monospace', fontWeight: 'bold'}}>{domain}</span>
+                                                {allowlist.hardcoded && allowlist.hardcoded.includes(domain) ? 
+                                                    <span style={{marginLeft: '8px', fontSize: '0.7em', padding: '2px 6px', backgroundColor: '#224422', borderRadius: '4px'}}>Built-in</span> : 
+                                                    <span style={{marginLeft: '8px', fontSize: '0.7em', padding: '2px 6px', backgroundColor: '#0066aa', borderRadius: '4px'}}>Override</span>
+                                                }
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
                             </div>
                         </div>
                     </div>

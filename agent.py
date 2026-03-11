@@ -6,6 +6,28 @@ import analyzer
 
 BLOCKLIST_FILE = "blocklist.txt"
 
+def clean_blocklist():
+    """Removes allowlisted domains from the blocklist."""
+    if not os.path.exists(BLOCKLIST_FILE):
+        return
+    
+    try:
+        valid_lines = []
+        with open(BLOCKLIST_FILE, 'r') as f:
+            for line in f:
+                parts = line.strip().split(',')
+                if len(parts) >= 2:
+                    domain = parts[1]
+                    if not analyzer.is_allowlisted(domain):
+                        valid_lines.append(line)
+                        
+        with open(BLOCKLIST_FILE, 'w') as f:
+            for line in valid_lines:
+                f.write(line)
+        print("Blocklist cleaned of any newly allowlisted domains.")
+    except Exception as e:
+        print(f"Error cleaning blocklist: {e}")
+
 def run_agent():
     """
     AGENTIC LOOP FUNCTION
@@ -18,6 +40,9 @@ def run_agent():
        intervention, effectively "blocking" the domain.
     """
     print("Agent started: Monitoring DNS logs for critical threats...")
+    
+    # Clean the blocklist on startup
+    clean_blocklist()
     
     while True:
         try:
@@ -45,7 +70,7 @@ def run_agent():
                 # ACT: Update blocklist with new findings
                 new_blocks = 0
                 for domain in critical_domains:
-                    if domain not in existing_blocks:
+                    if domain not in existing_blocks and not analyzer.is_allowlisted(domain):
                         timestamp = datetime.now().isoformat()
                         with open(BLOCKLIST_FILE, 'a') as f:
                             f.write(f"{timestamp},{domain}\n")

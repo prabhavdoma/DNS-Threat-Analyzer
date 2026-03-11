@@ -14,6 +14,31 @@ ALLOWLIST = {
     "amazon.com", "cloudflare.com", "youtube.com", 
     "stackoverflow.com"
 }
+OVERRIDE_FILE = "override_allowlist.txt"
+
+def get_allowlist():
+    import os
+    allowlist = set(ALLOWLIST)
+    if os.path.exists(OVERRIDE_FILE):
+        try:
+            with open(OVERRIDE_FILE, 'r') as f:
+                for line in f:
+                    domain = line.strip().lower()
+                    if domain:
+                        allowlist.add(domain)
+        except Exception:
+            pass
+    return allowlist
+
+def is_allowlisted(domain):
+    domain_lower = domain.lower()
+    parts = domain_lower.split('.')
+    base_domain = domain_lower
+    if len(parts) >= 2:
+        base_domain = f"{parts[-2]}.{parts[-1]}"
+    
+    current_allowlist = get_allowlist()
+    return domain_lower in current_allowlist or base_domain in current_allowlist
 
 def load_threat_feed():
     """
@@ -167,11 +192,7 @@ def score_domain(domain):
     parts = domain_lower.split('.')
     
     # 0. Check Allowlist first
-    base_domain = domain_lower
-    if len(parts) >= 2:
-        base_domain = f"{parts[-2]}.{parts[-1]}"
-        
-    if domain_lower in ALLOWLIST or base_domain in ALLOWLIST:
+    if is_allowlisted(domain):
         return {
             "domain": domain,
             "score": 0,

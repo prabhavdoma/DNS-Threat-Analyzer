@@ -160,6 +160,61 @@ def clear_history():
     
     return jsonify({"status": "success", "message": "History cleared"})
 
+@app.route('/api/override', methods=['POST'])
+def add_override():
+    """
+    Accepts {"domain": "example.com"} and adds it to the persistent override allowlist.
+    """
+    data = request.get_json()
+    if not data or 'domain' not in data:
+        return jsonify({"error": "Missing 'domain' in JSON body"}), 400
+        
+    domain = data['domain'].lower()
+    
+    try:
+        # Add to override file
+        with open(analyzer.OVERRIDE_FILE, 'a') as f:
+            f.write(f"{domain}\n")
+            
+        # Clean blocklist of this newly allowlisted domain
+        agent.clean_blocklist()
+        
+        # Update in-memory history
+        for entry in _analysis_history:
+            if entry["domain"].lower() == domain or entry["domain"].lower().endswith("." + domain):
+                entry["score"] = 0
+                entry["risk"] = "Low"
+                if "allowlisted" not in entry["flags"]:
+                    entry["flags"] = ["allowlisted"]
+                
+        return jsonify({"status": "success", "message": f"Added {domain} to allowlist"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/allowlist', methods=['GET'])
+def get_allowlist_endpoint():
+    """
+    Returns both hardcoded and override allowlists.
+    """
+    hardcoded = list(analyzer.ALLOWLIST)
+    overrides = []
+    
+    if os.path.exists(analyzer.OVERRIDE_FILE):
+        try:
+            with open(analyzer.OVERRIDE_FILE, 'r') as f:
+                for line in f:
+                    domain = line.strip().lower()
+                    if domain:
+                        overrides.append(domain)
+        except Exception:
+            pass
+            
+    return jsonify({
+        "hardcoded": hardcoded,
+        "overrides": overrides,
+        "combined": list(set(hardcoded + overrides))
+    })
+
 @app.route('/api/blocklist', methods=['GET'])
 def get_blocklist():
     """
