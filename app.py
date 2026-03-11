@@ -3,6 +3,8 @@ from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 import tempfile
 import analyzer
+import agent
+import threading
 
 app = Flask(__name__, static_folder='static')
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
@@ -25,6 +27,9 @@ def initialize_feed():
         analyzer.load_threat_feed()
         _feed_loaded = True
         print("Threat feed initialized.")
+        print("Starting agent monitoring thread...")
+        agent.start_agent_thread()
+
 
 @app.route('/')
 def serve_index():
@@ -154,6 +159,30 @@ def clear_history():
     _analysis_history = []
     
     return jsonify({"status": "success", "message": "History cleared"})
+
+@app.route('/api/blocklist', methods=['GET'])
+def get_blocklist():
+    """
+    Reads the blocklist.txt file and returns its contents.
+    WHY: Exposes the agent's actions to the frontend dashboard, allowing users
+    to see the automated blocklist updates.
+    """
+    blocklist = []
+    if os.path.exists(agent.BLOCKLIST_FILE):
+        try:
+            with open(agent.BLOCKLIST_FILE, 'r') as f:
+                for line in f:
+                    parts = line.strip().split(',')
+                    if len(parts) >= 2:
+                        blocklist.append({
+                            "timestamp": parts[0],
+                            "domain": parts[1]
+                        })
+        except Exception as e:
+            print(f"Error reading blocklist: {e}")
+            
+    return jsonify(blocklist)
+
 
 if __name__ == '__main__':
     # Ensure static directory exists

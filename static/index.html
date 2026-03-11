@@ -211,6 +211,7 @@
 
         function Dashboard() {
             const [data, setData] = useState({ summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0 }, results: [] });
+            const [blocklist, setBlocklist] = useState([]);
             const [filter, setFilter] = useState('All');
             const [domainInput, setDomainInput] = useState('');
             const chartRef = useRef(null);
@@ -229,11 +230,32 @@
                     console.error("Error fetching data:", e);
                 }
             };
+            
+            const fetchBlocklist = async () => {
+                try {
+                    const res = await fetch('/api/blocklist');
+                    const result = await res.json();
+                    if (Array.isArray(result)) {
+                        setBlocklist(result);
+                    }
+                } catch (e) {
+                    console.error("Error fetching blocklist:", e);
+                }
+            };
 
-            // Fetch on mount or filter change
+            // Fetch on mount, filter change, and every 30 seconds
             useEffect(() => {
                 fetchData();
+                const interval = setInterval(fetchData, 30000);
+                return () => clearInterval(interval);
             }, [filter]);
+            
+            // Blocklist polling interval
+            useEffect(() => {
+                fetchBlocklist();
+                const interval = setInterval(fetchBlocklist, 30000);
+                return () => clearInterval(interval);
+            }, []);
 
             // Chart initialization & update
             useEffect(() => {
@@ -453,6 +475,41 @@
                                 ) : (
                                     <canvas ref={chartRef}></canvas>
                                 )}
+                            </div>
+                            
+                            <hr style={{borderColor: 'var(--border-color)', margin: '24px 0'}} />
+                            
+                            <h3 className="panel-header" style={{color: 'var(--red-color)'}}>
+                                Agentic Blocklist
+                                <span style={{fontSize: '0.6em', color: '#aaaaaa', marginLeft: '10px', verticalAlign: 'middle', fontWeight: 'normal'}}>
+                                    (Auto-updated)
+                                </span>
+                            </h3>
+                            <div style={{
+                                border: '1px solid var(--red-color)', 
+                                borderRadius: '6px', 
+                                padding: '15px',
+                                backgroundColor: 'rgba(255, 77, 77, 0.05)',
+                                maxHeight: '300px',
+                                overflowY: 'auto'
+                            }}>
+                                {blocklist.length === 0 ? (
+                                    <div style={{color: '#888', fontStyle: 'italic', textAlign: 'center'}}>
+                                        No domains have been auto-blocked by the agent yet.
+                                    </div>
+                                ) : (
+                                    <ul style={{margin: 0, paddingLeft: '20px', color: '#ffcccc'}}>
+                                        {blocklist.map((item, i) => (
+                                            <li key={i} style={{marginBottom: '8px'}}>
+                                                <span style={{fontFamily: 'monospace', fontWeight: 'bold'}}>{item.domain}</span>
+                                                <div style={{fontSize: '0.8em', color: '#aaaaaa'}}>{new Date(item.timestamp).toLocaleString()}</div>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                            <div style={{marginTop: '12px', fontSize: '0.85em', color: '#888', fontStyle: 'italic', lineHeight: '1.4'}}>
+                                <strong>How it works:</strong> The agentic loop continuously monitors DNS queries, reasons about threats by scoring domains against heuristic models and known threat feeds, and autonomously acts by appending 'Critical' threats to a firewall-ready blocklist without human intervention.
                             </div>
                         </div>
                     </div>
