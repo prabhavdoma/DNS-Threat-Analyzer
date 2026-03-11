@@ -241,6 +241,49 @@ def get_blocklist():
             
     return jsonify(blocklist)
 
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    """
+    Returns query counts bucketed by minute for the last 10 minutes,
+    based on the timestamps in sample_logs/sample.log
+    """
+    import datetime
+    
+    stats = {}
+    now = datetime.datetime.now()
+    
+    # Initialize the last 10 minutes with 0
+    # We do 0 to 9 to get exactly 10 minutes including current minute
+    minute_buckets = []
+    for i in range(10):
+        dt = now - datetime.timedelta(minutes=i)
+        minute_bucket = dt.strftime('%H:%M')
+        minute_buckets.append(minute_bucket)
+        stats[minute_bucket] = 0
+
+    log_path = os.path.join(os.path.dirname(__file__), 'sample_logs', 'sample.log')
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 1:
+                        try:
+                            # Timestamp is ISO format
+                            ts = datetime.datetime.fromisoformat(parts[0])
+                            # Check if it's within the last 10 minutes
+                            if now - ts <= datetime.timedelta(minutes=10):
+                                minute_bucket = ts.strftime('%H:%M')
+                                if minute_bucket in stats:
+                                    stats[minute_bucket] += 1
+                        except ValueError:
+                            pass
+        except Exception as e:
+            print(f"Error reading log for stats: {e}")
+            
+    # sort the stats chronologically (oldest to newest)
+    sorted_stats = [{"time": bucket, "count": stats[bucket]} for bucket in reversed(minute_buckets)]
+    return jsonify(sorted_stats)
 
 if __name__ == '__main__':
     # Ensure static directory exists

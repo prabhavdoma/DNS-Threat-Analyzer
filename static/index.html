@@ -211,12 +211,15 @@
 
         function Dashboard() {
             const [data, setData] = useState({ summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0 }, results: [] });
+            const [statsData, setStatsData] = useState([]);
             const [blocklist, setBlocklist] = useState([]);
             const [allowlist, setAllowlist] = useState({ hardcoded: [], overrides: [], combined: [] });
             const [filter, setFilter] = useState('All');
             const [domainInput, setDomainInput] = useState('');
             const chartRef = useRef(null);
             const chartInstance = useRef(null);
+            const lineChartRef = useRef(null);
+            const lineChartInstance = useRef(null);
 
             const fetchData = async () => {
                 let url = '/api/queries';
@@ -254,6 +257,16 @@
                 }
             };
 
+            const fetchStats = async () => {
+                try {
+                    const res = await fetch('/api/stats');
+                    const result = await res.json();
+                    setStatsData(result);
+                } catch (e) {
+                    console.error("Error fetching stats:", e);
+                }
+            };
+
             const handleOverride = async (domain) => {
                 try {
                     await fetch('/api/override', {
@@ -281,9 +294,11 @@
             useEffect(() => {
                 fetchBlocklist();
                 fetchAllowlist();
+                fetchStats();
                 const interval = setInterval(() => {
                     fetchBlocklist();
                     fetchAllowlist();
+                    fetchStats();
                 }, 30000);
                 return () => clearInterval(interval);
             }, []);
@@ -346,6 +361,56 @@
                     }
                 };
             }, [data.summary]); // Re-render chart only when summary statistics change
+
+            // Line Chart initialization & update
+            useEffect(() => {
+                if (lineChartRef.current && statsData.length > 0) {
+                    if (lineChartInstance.current) {
+                        lineChartInstance.current.destroy();
+                    }
+
+                    const ctx = lineChartRef.current.getContext('2d');
+                    
+                    lineChartInstance.current = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: statsData.map(d => d.time),
+                            datasets: [{
+                                label: 'Queries per Minute',
+                                data: statsData.map(d => d.count),
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                                borderWidth: 2,
+                                fill: true,
+                                tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: false
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: {
+                                        precision: 0
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                return () => {
+                    if (lineChartInstance.current) {
+                        lineChartInstance.current.destroy();
+                    }
+                };
+            }, [statsData]);
 
             const loadSample = async () => {
                 try {
@@ -497,6 +562,19 @@
                         </div>
 
                         <div className="panel" style={{gridColumn: '2', height: 'fit-content'}}>
+                            <h3 className="panel-header">Query Volume (Last 10 Min)</h3>
+                            <div className="chart-container" style={{height: '250px', marginBottom: '24px'}}>
+                                {statsData.length === 0 ? (
+                                    <div style={{color: '#666', fontStyle: 'italic', display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%'}}>
+                                        Loading stats...
+                                    </div>
+                                ) : (
+                                    <canvas ref={lineChartRef}></canvas>
+                                )}
+                            </div>
+                            
+                            <hr style={{borderColor: 'var(--border-color)', margin: '24px 0'}} />
+
                             <h3 className="panel-header">Risk Distribution</h3>
                             <div className="chart-container">
                                 {data.summary.total === 0 ? (
