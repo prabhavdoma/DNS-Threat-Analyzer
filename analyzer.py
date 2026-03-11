@@ -6,6 +6,14 @@ from urllib.parse import urlparse
 
 # Global set to store known threat domains
 _threat_domains = set()
+_phishing_domains = set()
+
+# Hardcoded allowlist of trusted domains
+ALLOWLIST = {
+    "google.com", "github.com", "microsoft.com", 
+    "amazon.com", "cloudflare.com", "youtube.com", 
+    "stackoverflow.com"
+}
 
 def load_threat_feed():
     """
@@ -38,7 +46,26 @@ def load_threat_feed():
                     except Exception:
                         continue
     except Exception as e:
-        print(f"Error loading threat feed: {e}")
+        print(f"Error loading URLhaus feed: {e}")
+        
+    # Load OpenPhish feed
+    openphish_url = "https://openphish.com/feed.txt"
+    try:
+        req = urllib.request.Request(openphish_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            content = response.read().decode('utf-8').splitlines()
+            for line in content:
+                url = line.strip()
+                if url:
+                    try:
+                        parsed = urlparse(url)
+                        if parsed.netloc:
+                            domain = parsed.netloc.split(':')[0]
+                            _phishing_domains.add(domain.lower())
+                    except Exception:
+                        continue
+    except Exception as e:
+        print(f"Error loading OpenPhish feed: {e}")
 
 def is_known_malicious(domain):
     """
@@ -53,6 +80,20 @@ def is_known_malicious(domain):
     for i in range(len(parts) - 1):
         parent_domain = '.'.join(parts[i:])
         if parent_domain in _threat_domains:
+            return True
+            
+    return False
+
+def is_known_phishing(domain):
+    """
+    Checks if a domain or any of its parent domains exist in _phishing_domains.
+    """
+    domain = domain.lower()
+    parts = domain.split('.')
+    
+    for i in range(len(parts) - 1):
+        parent_domain = '.'.join(parts[i:])
+        if parent_domain in _phishing_domains:
             return True
             
     return False
@@ -120,7 +161,26 @@ def score_domain(domain):
     WHY: Combining multiple weak signals (like depth or entropy) or a single strong 
     signal (like a known threat match) gives a more robust indication of malicious intent
     than relying on any single metric.
+    Than relying on any single metric.
     """
+    domain_lower = domain.lower()
+    parts = domain_lower.split('.')
+    
+    # 0. Check Allowlist first
+    base_domain = domain_lower
+    if len(parts) >= 2:
+        base_domain = f"{parts[-2]}.{parts[-1]}"
+        
+    if domain_lower in ALLOWLIST or base_domain in ALLOWLIST:
+        return {
+            "domain": domain,
+            "score": 0,
+            "risk": "Low",
+            "flags": ["allowlisted"],
+            "entropy": round(shannon_entropy(domain), 3),
+            "subdomain_depth": subdomain_depth(domain)
+        }
+
     score = 0
     flags = []
     
@@ -160,6 +220,11 @@ def score_domain(domain):
         if is_dga_likely(base_label):
             score += 45
             flags.append("DGA Likely (Low Vowel Ratio)")
+            
+    # 6. Check OpenPhish Feed (Strong signal)
+    if is_known_phishing(domain):
+        score += 70
+        flags.append("known_phishing_feed")
             
     # Cap score at 100
     score = min(score, 100)
