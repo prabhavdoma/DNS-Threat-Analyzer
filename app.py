@@ -4,6 +4,7 @@ from werkzeug.utils import secure_filename
 import tempfile
 import analyzer
 import agent
+import capture
 import threading
 
 app = Flask(__name__, static_folder='static')
@@ -29,6 +30,8 @@ def initialize_feed():
         print("Threat feed initialized.")
         print("Starting agent monitoring thread...")
         agent.start_agent_thread()
+        print("Starting DNS capture thread...")
+        capture.start_capture()
 
 
 @app.route('/')
