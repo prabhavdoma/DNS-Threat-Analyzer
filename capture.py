@@ -1,7 +1,11 @@
 import threading
 import datetime
 import os
-from scapy.all import sniff, DNS, DNSQR, IP, IPv6
+try:
+    from scapy.all import sniff, DNS, DNSQR, IP, IPv6
+except ImportError:
+    print("Scapy not found. DNS capture will be disabled (expected on Vercel).")
+    sniff = None
 import analyzer
 import db
 
@@ -60,5 +64,8 @@ def _run_sniff():
     sniff(filter="port 53", prn=_process_packet, store=0)
 
 def start_capture():
+    if sniff is None:
+        print("DNS capture disabled: Scapy is missing.")
+        return
     t = threading.Thread(target=_run_sniff, daemon=True)
     t.start()

@@ -31,10 +31,15 @@ def initialize_feed():
         db.init_db()
         _feed_loaded = True
         print("Threat feed initialized.")
-        print("Starting agent monitoring thread...")
-        agent.start_agent_thread(_analysis_history)
-        print("Starting DNS capture thread...")
-        capture.start_capture()
+        
+        # Skip background threads on Vercel (Serverless)
+        if os.environ.get('VERCEL'):
+            print("Running on Vercel: Skipping background threads.")
+        else:
+            print("Starting agent monitoring thread...")
+            agent.start_agent_thread(_analysis_history)
+            print("Starting DNS capture thread...")
+            capture.start_capture()
 
 
 @app.route('/')
@@ -127,12 +132,9 @@ def get_queries():
 @app.route('/api/summary', methods=['GET'])
 def get_summary():
     """
-    Returns total captured queries from sample.log, persistent Critical/High
-    counts from threats.db, and live feed counts from _analysis_history.
-    WHY: Critical/High are persisted in the DB so they reflect all-time detections.
-    Medium/Low are transient (only exist in the live feed), so we count them
-    from _analysis_history. The donut chart uses the live_* fields to match
-    what the user sees in the Live Feed table.
+    Returns total captured queries from sample.log, all-time threat counts
+    from threats.db for the stat cards, and live feed counts from 
+    _analysis_history for the donut chart.
     """
     total_queries = 0
     log_path = os.path.join(os.path.dirname(__file__), 'sample_logs', 'sample.log')
@@ -149,7 +151,7 @@ def get_summary():
         print(f"Error querying db for summary: {e}")
         db_stats = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
 
-    # Count risk levels from the live feed (in-memory analysis of last 50 log entries)
+    # Count risk levels from the live feed (last 50 log entries)
     live_critical = sum(1 for r in _analysis_history if r['risk'] == 'Critical')
     live_high = sum(1 for r in _analysis_history if r['risk'] == 'High')
     live_medium = sum(1 for r in _analysis_history if r['risk'] == 'Medium')
@@ -157,12 +159,12 @@ def get_summary():
         
     summary = {
         "total": total_queries,
-        # Stat cards: Critical/High from DB (persistent), Medium/Low from live feed
+        # Stat cards: ALL TIME from threats.db
         "critical": db_stats.get("Critical", 0),
         "high": db_stats.get("High", 0),
-        "medium": live_medium,
-        "low": live_low,
-        # Donut chart: all counts from live feed so it matches the visible table
+        "medium": db_stats.get("Medium", 0),
+        "low": db_stats.get("Low", 0),
+        # Donut chart: LIVE from last 50 entries
         "live_critical": live_critical,
         "live_high": live_high,
         "live_medium": live_medium,
@@ -182,6 +184,39 @@ def clear_history():
     _analysis_history = []
     
     return jsonify({"status": "success", "message": "History cleared"})
+
+@app.route('/api/reset', methods=['POST'])
+def reset_all_data():
+    """
+    Full data reset: clears sample.log, threats.db, blocklist.txt, and _analysis_history.
+    WHY: Allows a clean slate for fresh monitoring sessions.
+    """
+    global _analysis_history
+    _analysis_history = []
+    
+    # Clear sample.log
+    log_path = os.path.join(os.path.dirname(__file__), 'sample_logs', 'sample.log')
+    try:
+        open(log_path, 'w').close()
+    except Exception as e:
+        print(f"Error clearing sample.log: {e}")
+    
+    # Clear threats.db
+    try:
+        db.reset_db()
+    except Exception as e:
+        print(f"Error resetting threats.db: {e}")
+    
+    # Clear blocklist.txt
+    blocklist_path = os.path.join(os.path.dirname(__file__), 'blocklist.txt')
+    if os.environ.get('VERCEL'):
+        blocklist_path = "/tmp/blocklist.txt"
+    try:
+        open(blocklist_path, 'w').close()
+    except Exception as e:
+        print(f"Error clearing blocklist.txt: {e}")
+    
+    return jsonify({"status": "reset"})
 
 @app.route('/api/override', methods=['POST'])
 def add_override():

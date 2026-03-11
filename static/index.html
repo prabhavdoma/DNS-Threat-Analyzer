@@ -459,10 +459,37 @@
                 }
             };
 
+            const handleReset = async () => {
+                if (!confirm('Are you sure? This will clear ALL data: sample.log, threats.db, blocklist.txt, and in-memory history.')) return;
+                try {
+                    await fetch('/api/reset', { method: 'POST' });
+                    fetchSummary();
+                    fetchLiveQueries();
+                    fetchBlocklist();
+                    fetchAllowlist();
+                    fetchStats();
+                } catch (err) {
+                    console.error('Reset failed:', err);
+                }
+            };
+
             return (
                 <div className="container">
-                    <header>
+                    <header style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                         <h1>DNS Threat Analyzer</h1>
+                        <button 
+                            onClick={handleReset}
+                            style={{
+                                backgroundColor: '#cc0000', 
+                                color: '#fff', 
+                                padding: '10px 20px', 
+                                fontSize: '0.9em', 
+                                borderRadius: '6px', 
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontWeight: 'bold'
+                            }}
+                        >Reset All Data</button>
                     </header>
 
                     <div className="stats-grid">

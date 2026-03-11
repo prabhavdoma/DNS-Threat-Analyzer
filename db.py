@@ -2,6 +2,8 @@ import sqlite3
 import os
 
 DB_FILE = os.path.join(os.path.dirname(__file__), "threats.db")
+if os.environ.get('VERCEL'):
+    DB_FILE = "/tmp/threats.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -20,6 +22,15 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+
+def reset_db():
+    """Drops and recreates the detections table to clear all persistent threat data."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('DROP TABLE IF EXISTS detections')
+    conn.commit()
+    conn.close()
+    init_db()
 
 def write_threat(domain_result):
     """Writes a threat to the database."""

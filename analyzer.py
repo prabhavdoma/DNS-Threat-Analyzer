@@ -2,6 +2,7 @@ import csv
 import math
 import re
 import urllib.request
+import os
 from urllib.parse import urlparse
 
 # Global set to store known threat domains
@@ -15,6 +16,8 @@ ALLOWLIST = {
     "stackoverflow.com", "jsdelivr.net"
 }
 OVERRIDE_FILE = "override_allowlist.txt"
+if os.environ.get('VERCEL'):
+    OVERRIDE_FILE = "/tmp/override_allowlist.txt"
 
 def get_allowlist():
     import os
@@ -191,7 +194,18 @@ def score_domain(domain):
     domain_lower = domain.lower()
     parts = domain_lower.split('.')
     
-    # 0. Check Allowlist first
+    # 0a. Skip reverse DNS lookups (.arpa domains) — never malicious
+    if domain_lower.endswith('.arpa'):
+        return {
+            "domain": domain,
+            "score": 0,
+            "risk": "Low",
+            "flags": ["reverse_dns"],
+            "entropy": round(shannon_entropy(domain), 3),
+            "subdomain_depth": subdomain_depth(domain)
+        }
+
+    # 0b. Check Allowlist
     if is_allowlisted(domain):
         return {
             "domain": domain,
@@ -315,8 +329,9 @@ def analyze_log(filepath):
         merged = {**entry, **analysis}
         results.append(merged)
         
-    # Sort descending by score
-    results.sort(key=lambda x: x["score"], reverse=True)
+    # Sort by timestamp descending so the newest queries appear at the top
+    # of the Live Feed and old entries naturally fall off the bottom
+    results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return results
 
 if __name__ == "__main__":
