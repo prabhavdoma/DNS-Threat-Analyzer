@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNS Threat Analyzer</title>
+    <!-- React & ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel CDN for compiling JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            --bg-color: #121212;
+            --surface-color: #1e1e1e;
+            --border-color: #333333;
+            --text-color: #e0e0e0;
+            --red-color: #ff4d4d;
+            --orange-color: #ffa64d;
+            --yellow-color: #ffff4d;
+            --green-color: #4dff4d;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header h1 {
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 12px;
+            margin-top: 0;
+            color: #ffffff;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background-color: var(--surface-color);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            margin: 0 0 8px 0;
+            font-size: 1.1em;
+            color: #aaaaaa;
+        }
+
+        .stat-card .value {
+            font-size: 2.2em;
+            font-weight: bold;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .panel {
+            background-color: var(--surface-color);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .panel-header {
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            color: #ffffff;
+        }
+
+        button {
+            padding: 10px 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 0.95em;
+            background-color: #3b82f6;
+            color: white;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #2563eb;
+        }
+
+        input, select {
+            padding: 10px;
+            background-color: #252525;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            border-radius: 6px;
+            margin-right: 8px;
+            font-size: 0.95em;
+        }
+        
+        input:focus, select:focus {
+            outline: center;
+            border-color: #3b82f6;
+        }
+
+        .action-bar {
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .row {
+            display: flex;
+            align-items: center;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95em;
+        }
+
+        th, td {
+            padding: 14px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: #252525;
+            color: #ffffff;
+            font-weight: 600;
+        }
+        
+        tr:hover {
+            background-color: #2a2a2a;
+        }
+
+        .badge {
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+            color: #000;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge.critical { background-color: var(--red-color); }
+        .badge.high { background-color: var(--orange-color); color: #000; }
+        .badge.medium { background-color: var(--yellow-color); color: #000; }
+        .badge.low { background-color: var(--green-color); color: #000; }
+
+        .score-bar-bg {
+            background-color: #333333;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .score-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 350px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function Dashboard() {
+            const [data, setData] = useState({ summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0 }, results: [] });
+            const [filter, setFilter] = useState('All');
+            const [domainInput, setDomainInput] = useState('');
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            const fetchData = async () => {
+                let url = '/api/queries';
+                if (filter !== 'All') {
+                    url += `?risk=${filter.toLowerCase()}`;
+                }
+                try {
+                    const res = await fetch(url);
+                    const result = await res.json();
+                    setData(result);
+                } catch (e) {
+                    console.error("Error fetching data:", e);
+                }
+            };
+
+            // Fetch on mount or filter change
+            useEffect(() => {
+                fetchData();
+            }, [filter]);
+
+            // Chart initialization & update
+            useEffect(() => {
+                // Wait for the canvas to be rendered and data to be available
+                if (chartRef.current) {
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+
+                    const ctx = chartRef.current.getContext('2d');
+                    
+                    Chart.defaults.color = '#e0e0e0';
+                    Chart.defaults.borderColor = '#333333';
+
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Critical', 'High', 'Medium', 'Low'],
+                            datasets: [{
+                                data: [
+                                    data.summary.critical,
+                                    data.summary.high,
+                                    data.summary.medium,
+                                    data.summary.low
+                                ],
+                                backgroundColor: [
+                                    '#ff4d4d', 
+                                    '#ffa64d', 
+                                    '#ffff4d', 
+                                    '#4dff4d'  
+                                ],
+                                borderWidth: 2,
+                                borderColor: '#1e1e1e',
+                                hoverOffset: 4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            cutout: '65%',
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: {
+                                        padding: 20,
+                                        font: { size: 14 }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                return () => {
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+                };
+            }, [data.summary]); // Re-render chart only when summary statistics change
+
+            const loadSample = async () => {
+                try {
+                    await fetch('/api/load-sample', { method: 'POST' });
+                    await fetchData();
+                } catch (e) {
+                    console.error("Error loading sample:", e);
+                }
+            };
+
+            const analyzeDomain = async () => {
+                if (!domainInput.trim()) return;
+                try {
+                    await fetch('/api/analyze/domain', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ domain: domainInput.trim() })
+                    });
+                    setDomainInput('');
+                    await fetchData();
+                } catch (e) {
+                    console.error("Error analyzing domain:", e);
+                }
+            };
+
+            const getColorForRisk = (risk) => {
+                switch(risk.toLowerCase()) {
+                    case 'critical': return 'var(--red-color)';
+                    case 'high': return 'var(--orange-color)';
+                    case 'medium': return 'var(--yellow-color)';
+                    case 'low': return 'var(--green-color)';
+                    default: return '#777';
+                }
+            };
+
+            return (
+                <div className="container">
+                    <header>
+                        <h1>DNS Threat Analyzer</h1>
+                    </header>
+
+                    <div className="stats-grid">
+                        <div className="stat-card">
+                            <h3>Total Queries</h3>
+                            <div className="value">{data.summary.total}</div>
+                        </div>
+                        <div className="stat-card">
+                            <h3 style={{color: 'var(--red-color)'}}>Critical</h3>
+                            <div className="value">{data.summary.critical}</div>
+                        </div>
+                        <div className="stat-card">
+                            <h3 style={{color: 'var(--orange-color)'}}>High</h3>
+                            <div className="value">{data.summary.high}</div>
+                        </div>
+                        <div className="stat-card">
+                            <h3 style={{color: 'var(--yellow-color)'}}>Medium</h3>
+                            <div className="value">{data.summary.medium}</div>
+                        </div>
+                    </div>
+
+                    <div className="dashboard">
+                        <div className="panel" style={{gridColumn: '1'}}>
+                            <div className="action-bar">
+                                <div className="row">
+                                    <button onClick={loadSample}>Load Sample Log</button>
+                                </div>
+                                <div className="row">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Enter domain to analyze..." 
+                                        value={domainInput} 
+                                        onChange={(e) => setDomainInput(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && analyzeDomain()}
+                                        style={{width: '250px'}}
+                                    />
+                                    <button onClick={analyzeDomain}>Analyze</button>
+                                </div>
+                            </div>
+                            
+                            <hr style={{borderColor: 'var(--border-color)', margin: '20px 0'}} />
+
+                            <div className="action-bar">
+                                <h3 style={{margin: 0}}>Analysis Results</h3>
+                                <div>
+                                    <label style={{marginRight: '8px', color: '#aaa'}}>Filter by Risk:</label>
+                                    <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+                                        <option value="All">All Levels</option>
+                                        <option value="critical">Critical</option>
+                                        <option value="high">High</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="low">Low</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div style={{overflowX: 'auto'}}>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Domain</th>
+                                            <th>Risk</th>
+                                            <th style={{minWidth: '100px'}}>Score</th>
+                                            <th>Entropy</th>
+                                            <th>Client IP</th>
+                                            <th>Flags</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {data.results.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="6" style={{textAlign: 'center', padding: '30px', color: '#888'}}>
+                                                    No results to display. Try changing the filter, loading a sample, or analyzing a domain.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            data.results.map((item, i) => (
+                                                <tr key={i}>
+                                                    <td style={{fontFamily: 'monospace', fontSize: '1.05em'}}>{item.domain}</td>
+                                                    <td>
+                                                        <span className={`badge ${item.risk.toLowerCase()}`}>
+                                                            {item.risk}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        {item.score}
+                                                        <div className="score-bar-bg">
+                                                            <div 
+                                                                className="score-bar-fill" 
+                                                                style={{
+                                                                    width: `${item.score}%`,
+                                                                    backgroundColor: getColorForRisk(item.risk)
+                                                                }}
+                                                            ></div>
+                                                        </div>
+                                                    </td>
+                                                    <td>{item.entropy}</td>
+                                                    <td>{item.client_ip}</td>
+                                                    <td>
+                                                        <span style={{color: '#bbb', fontSize: '0.9em'}}>
+                                                            {item.flags && item.flags.length > 0 ? item.flags.join(', ') : 'None'}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="panel" style={{gridColumn: '2', height: 'fit-content'}}>
+                            <h3 className="panel-header">Risk Distribution</h3>
+                            <div className="chart-container">
+                                {data.summary.total === 0 ? (
+                                    <div style={{color: '#666', fontStyle: 'italic'}}>
+                                        No data available
+                                    </div>
+                                ) : (
+                                    <canvas ref={chartRef}></canvas>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Dashboard />);
+    </script>
+</body>
+</html>

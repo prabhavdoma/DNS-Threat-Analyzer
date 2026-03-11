@@ -32,7 +32,7 @@ def serve_index():
     Serves the static index.html file.
     WHY: This is the main entry point for the frontend UI to interact with our API.
     """
-    return send_from_directory('static', 'index.html')
+    return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/api/analyze/domain', methods=['POST'])
 def analyze_single_domain():
